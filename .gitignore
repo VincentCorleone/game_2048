@@ -1,0 +1,10 @@
+/*/
+/*
+
+!/lib/
+!/test/
+
+!/pubspec.lock
+!/pubspec.yaml
+!/README.md
+!/.gitignore
