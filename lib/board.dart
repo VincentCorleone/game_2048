@@ -12,13 +12,14 @@ class Board extends ImplicitlyAnimatedWidget {
 
   static final double middle = 0.8;
 
-  static final int durationInMilliseconds = 300;
+  static final int durationInMilliseconds = 1000;
 
   Board(this.tiles, this.previousAction, this.size)
       : super(
             duration: previousAction == GameActions.newGame
                 ? Duration(
-                    milliseconds: (durationInMilliseconds * middle).round())
+                    milliseconds:
+                        (durationInMilliseconds * (1 - middle)).round())
                 : Duration(milliseconds: durationInMilliseconds));
 
   @override
@@ -27,11 +28,33 @@ class Board extends ImplicitlyAnimatedWidget {
   }
 }
 
-class _BoardState extends ImplicitlyAnimatedWidgetState<Board> {
-  List<List<int>> previousTiles;
+class _BoardState extends AnimatedWidgetBaseState<Board> {
+  List<List<int>> previousTiles = [
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0]
+  ];
 
-  Tween<Offset> _position =
-      Tween<Offset>(begin: Offset.zero, end: Offset(2.0, 0.0));
+  OpacityTween _opacityTween;
+  final double _beginOpacity = 0.2;
+  SizeTween _sizeTween;
+  final double _beginSize = 0.1;
+  Tween<double> _useless;
+
+
+
+  @override
+  void initState() {
+    super.initState();
+    controller.addStatusListener((AnimationStatus status) {
+      if (this.widget.previousAction == GameActions.newGame &&
+          status == AnimationStatus.completed) {
+        this._opacityTween.end = _beginOpacity;
+        this._sizeTween.end = _beginSize;
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -52,32 +75,65 @@ class _BoardState extends ImplicitlyAnimatedWidgetState<Board> {
     );
   }
 
-  List<List<Offset>> calculateOffset() {
-    return null;
+  @override
+  void forEachTween(visitor) {
+//    print(this.widget.previousAction);
+//    print("previous: " + this.previousTiles.toString());
+//    print("now: " + this.widget.tiles.toString());
+
+    double cellWidth = this.widget.size * 8 / 37;
+    if (this.widget.previousAction == GameActions.newGame) {
+      this._opacityTween = visitor(_opacityTween, 1.0,
+          (value) => OpacityTween(begin: _beginOpacity, end: value));
+      this._sizeTween =
+          visitor(_sizeTween, 1.0, (value) => SizeTween(begin: _beginSize, end: value));
+      // force animation
+      this._useless = visitor(_useless, 1.0, (value) => SizeTween(begin: 0.0, end: 0.0));
+    }
   }
 
   @override
-  void forEachTween(visitor) {
-    print(this.widget.previousAction);
-    print("previous: " + this.previousTiles.toString());
-    print("now: " + this.widget.tiles.toString());
-    //    visitor(
-//      _position,
-//      this.widget.offset,
-//        (value) => Tween<Offset>(begin: value)
-//    );
-
-    this.previousTiles = [
-      [0, 0, 0, 0],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0]
-    ];
+  void didUpdateTweens() {
     for (int i = 0; i < 4; i++) {
       for (int j = 0; j < 4; j++) {
         this.previousTiles[i][j] = this.widget.tiles[i][j];
       }
     }
+  }
+
+  List<List<Offset>> calculateOffset() {
+    return null;
+  }
+
+  Widget _wrap(List<List<int>> tiles,double cellWidth,Widget Function(Widget child) wrapFunction){
+    return Column(
+      children: tiles
+          .map((line) => Row(
+        children:
+        line.map((value) => wrapFunction(Tile.get(value, cellWidth))).toList(),
+      ))
+          .toList(),
+    );
+  }
+
+  Widget buildForeground(List<List<int>> tiles) {
+    double cellWidth = this.widget.size * 8 / 37;
+//    print(_opacityTween.toString());
+    Widget stable = this._wrap(tiles, cellWidth, (child)=>child);
+    if (this.widget.previousAction == GameActions.newGame) {
+//      print(_opacityTween.evaluate(animation).toString());
+      return EmergeWidgetTween(
+              begin: this._wrap(tiles, cellWidth, (child)=> ScaleTransition(
+                scale: _sizeTween.animate(animation),
+                child: Opacity(
+                  opacity: this._opacityTween.evaluate(animation),
+                  child: child,
+                ),
+              )),
+              end: stable)
+          .evaluate(animation);
+    }
+    return stable;
   }
 
   Widget buildBackground() {
@@ -100,43 +156,33 @@ class _BoardState extends ImplicitlyAnimatedWidgetState<Board> {
       children: cells,
     );
   }
+}
 
-  Widget buildForeground(List<List<int>> tiles) {
-    double cellWidth = this.widget.size * 8 / 37;
-    return Column(
-      children: tiles
-          .map((line) => Row(
-                children:
-                    line.map((value) => Tile.get(value, cellWidth)).toList(),
-              ))
-          .toList(),
-    );
+class OpacityTween extends Tween<double> {
+  OpacityTween({double begin, double end}) : super(begin: begin, end: end);
+}
+
+class SizeTween extends Tween<double> {
+  SizeTween({double begin, double end}) : super(begin: begin, end: end);
+}
+
+class EmergeWidgetTween extends Tween<Widget> {
+  EmergeWidgetTween({Widget begin, Widget end}) : super(begin: begin, end: end);
+
+  @override
+  Widget lerp(double t) {
+    if (t == 1.0) {
+      return end;
+    } else {
+      return begin;
+    }
   }
-}
-
-class NewGamePara {
-  double size;
-
-  ///  0 being transparent and 255 being fully opaque.
-  double alpha;
-
-  NewGamePara operator +(NewGamePara other) => NewGamePara(size + other.size, alpha + other.alpha);
-
-  NewGamePara operator -(NewGamePara other) => NewGamePara(size - other.size, alpha - other.alpha);
-
-  NewGamePara(this.size, this.alpha);
-}
-
-class NewGameTween extends Tween<NewGamePara>{
-
-  NewGameTween();
 }
 
 class PositionTween extends Tween<Offset> {
   final double middle;
 
   PositionTween(this.middle);
-
 }
 
 class Tile {
@@ -169,7 +215,7 @@ class Tile {
             value.toString(),
             style: TextStyle(
                 fontWeight: FontWeight.bold,
-                fontSize: _getTextSize(value),
+                fontSize: _getTextSize(value) * width / 80,
                 color: _getTextColor(value)),
           )),
         );
