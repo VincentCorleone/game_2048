@@ -44,7 +44,6 @@ class _BoardState extends State<Board> with TickerProviderStateMixin<Board> {
   @override
   void initState() {
     super.initState();
-        this._sizeTween.end = _beginSize;
 
     _state = CombinedState();
 
