@@ -1,59 +1,74 @@
 import 'dart:collection';
-
 import 'package:flutter/material.dart';
 import 'package:game_2048/action.dart';
 
-class Board extends ImplicitlyAnimatedWidget {
+class Board extends StatefulWidget {
   final List<List<int>> tiles;
 
   final GameActions previousAction;
 
   final double size;
 
-  static final double middle = 0.8;
+  static final double middle = 0.5;
 
-  static final int durationInMilliseconds = 1000;
+  static final int durationInMilliseconds = 300;
 
-  Board(this.tiles, this.previousAction, this.size)
-      : super(
-            duration: previousAction == GameActions.newGame
-                ? Duration(
-                    milliseconds:
-                        (durationInMilliseconds * (1 - middle)).round())
-                : Duration(milliseconds: durationInMilliseconds));
+  Duration get slideDuration => Duration(milliseconds: (durationInMilliseconds * middle).round());
+
+  Duration get emergeDuration =>
+      Duration(milliseconds: (durationInMilliseconds * (1 - middle)).round());
+
+  Board(this.tiles, this.previousAction, this.size);
 
   @override
-  ImplicitlyAnimatedWidgetState<ImplicitlyAnimatedWidget> createState() {
-    return _BoardState();
-  }
+  _BoardState createState() => _BoardState();
 }
 
-class _BoardState extends AnimatedWidgetBaseState<Board> {
-  List<List<int>> previousTiles = [
-    [0, 0, 0, 0],
-    [0, 0, 0, 0],
-    [0, 0, 0, 0],
-    [0, 0, 0, 0]
-  ];
+class _BoardState extends State<Board> with TickerProviderStateMixin<Board> {
+  AnimationController _slideController;
 
-  OpacityTween _opacityTween;
-  final double _beginOpacity = 0.2;
-  SizeTween _sizeTween;
-  final double _beginSize = 0.1;
-  Tween<double> _useless;
+  AnimationController _emergeController;
 
+  Animation<double> _slideAnimation;
 
+  Animation<double> _emergeAnimation;
+
+  Animation<double> _mergeAnimation;
+
+  final Tween<double> _emergeTween = Tween<double>(begin: 0.0, end: 1.0);
+
+  final Tween<double> _mergeTween = Tween<double>(begin: 0.0, end: 1.0);
+
+  CombinedState _state;
 
   @override
   void initState() {
     super.initState();
-    controller.addStatusListener((AnimationStatus status) {
-      if (this.widget.previousAction == GameActions.newGame &&
-          status == AnimationStatus.completed) {
-        this._opacityTween.end = _beginOpacity;
         this._sizeTween.end = _beginSize;
+
+    _state = CombinedState();
+
+    // init animation controller and animation
+    _slideController = AnimationController(duration: this.widget.slideDuration, vsync: this);
+    _emergeController = AnimationController(duration: this.widget.emergeDuration, vsync: this);
+    _slideController.addStatusListener((AnimationStatus status) {
+      switch (status) {
+        case AnimationStatus.completed:
+          _emergeController.forward();
+          break;
+        case AnimationStatus.dismissed:
+        case AnimationStatus.forward:
+        case AnimationStatus.reverse:
       }
     });
+    _slideAnimation = _slideController;
+    _emergeAnimation = _emergeController;
+    _mergeAnimation = CurvedAnimation(parent: _emergeController, curve: Curves.easeOutBack);
+    _emergeController.addListener(_handleAnimationChanged);
+    _slideController.addListener(_handleAnimationChanged);
+
+    _state.updatePreviousTilesAndAction(this.widget.tiles, this.widget.previousAction);
+    _restartControllers();
   }
 
   @override
@@ -61,82 +76,112 @@ class _BoardState extends AnimatedWidgetBaseState<Board> {
     return Container(
       decoration: BoxDecoration(
           color: Color.fromARGB(255, 185, 173, 162),
-          borderRadius:
-              BorderRadius.all(Radius.circular(this.widget.size / 74))),
+          borderRadius: BorderRadius.all(Radius.circular(this.widget.size / 74))),
       width: this.widget.size,
       height: this.widget.size,
       padding: EdgeInsets.all(this.widget.size / 74),
       child: Stack(
         children: <Widget>[
-          buildBackground(),
-          buildForeground(this.widget.tiles),
+          _buildBackground(),
+          _buildForeground(),
         ],
       ),
     );
   }
 
-  @override
-  void forEachTween(visitor) {
-//    print(this.widget.previousAction);
-//    print("previous: " + this.previousTiles.toString());
-//    print("now: " + this.widget.tiles.toString());
+  void _handleAnimationChanged() {
+    setState(() {});
+  }
 
-    double cellWidth = this.widget.size * 8 / 37;
+  @override
+  void didUpdateWidget(Board oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    _state.updatePreviousTilesAndAction(this.widget.tiles, this.widget.previousAction);
+    _restartControllers();
+  }
+
+  void _restartControllers() {
+    _slideController.value = 0.0;
+    _emergeController.value = 0.0;
     if (this.widget.previousAction == GameActions.newGame) {
-      this._opacityTween = visitor(_opacityTween, 1.0,
-          (value) => OpacityTween(begin: _beginOpacity, end: value));
-      this._sizeTween =
-          visitor(_sizeTween, 1.0, (value) => SizeTween(begin: _beginSize, end: value));
-      // force animation
-      this._useless = visitor(_useless, 1.0, (value) => SizeTween(begin: 0.0, end: 0.0));
+      _emergeController.forward();
+    } else {
+      _calculateState();
+      _slideController.forward();
     }
   }
 
   @override
-  void didUpdateTweens() {
+  void dispose() {
+    _slideController.dispose();
+    _emergeController.dispose();
+    super.dispose();
+  }
+
+  void _updateElement(void Function(int i, int j) updateFunction) {
     for (int i = 0; i < 4; i++) {
       for (int j = 0; j < 4; j++) {
-        this.previousTiles[i][j] = this.widget.tiles[i][j];
+        updateFunction(i, j);
       }
     }
   }
 
-  List<List<Offset>> calculateOffset() {
-    return null;
-  }
-
-  Widget _wrap(List<List<int>> tiles,double cellWidth,Widget Function(Widget child) wrapFunction){
-    return Column(
-      children: tiles
-          .map((line) => Row(
-        children:
-        line.map((value) => wrapFunction(Tile.get(value, cellWidth))).toList(),
-      ))
-          .toList(),
-    );
-  }
-
-  Widget buildForeground(List<List<int>> tiles) {
+  Widget _buildForeground() {
     double cellWidth = this.widget.size * 8 / 37;
-//    print(_opacityTween.toString());
-    Widget stable = this._wrap(tiles, cellWidth, (child)=>child);
+    Widget stable = this._wrap(this._state.nowTiles, cellWidth, (child, di, dj) => child);
     if (this.widget.previousAction == GameActions.newGame) {
-//      print(_opacityTween.evaluate(animation).toString());
-      return EmergeWidgetTween(
-              begin: this._wrap(tiles, cellWidth, (child)=> ScaleTransition(
-                scale: _sizeTween.animate(animation),
-                child: Opacity(
-                  opacity: this._opacityTween.evaluate(animation),
-                  child: child,
-                ),
-              )),
-              end: stable)
-          .evaluate(animation);
+      return this._wrap(this._state.nowTiles, cellWidth, (child, di, dj) {
+        if (this._state.nowTiles[di][dj] == 0) {
+          return child;
+        } else {
+          return ScaleTransition(
+            scale: _emergeTween.animate(_emergeAnimation),
+            child: Opacity(
+              opacity: this._emergeTween.evaluate(_emergeAnimation),
+              child: child,
+            ),
+          );
+        }
+      });
+    } else {
+      return Stack(children: <Widget>[
+        this._wrap(this._state.previousTiles, cellWidth, (child, di, dj) {
+          if (this._state.previousTiles[di][dj] == 0) {
+            return child;
+          } else {
+            return SlideTransition(
+              position: _state.offsetTweens[di][dj].animate(_slideAnimation),
+              child: child,
+            );
+          }
+        }),
+        this._wrap(this._state.nowTiles, cellWidth, (child, di, dj) {
+          if (_state.isMerged[di][dj] == true) {
+            return ScaleTransition(
+              scale: _mergeTween.animate(_mergeAnimation),
+              child: Opacity(
+                opacity: this._emergeTween.evaluate(_emergeAnimation),
+                child: child,
+              ),
+            );
+          } else if (_state.isMerged[di][dj] == false) {
+            return ScaleTransition(
+              scale: _emergeTween.animate(_emergeAnimation),
+              child: Opacity(
+                opacity: this._emergeTween.evaluate(_emergeAnimation),
+                child: child,
+              ),
+            );
+          } else {
+            return Opacity(opacity: 0.0, child: child);
+          }
+        })
+      ]);
     }
-    return stable;
   }
 
-  Widget buildBackground() {
+  Widget _buildBackground() {
     double cellWidth = this.widget.size * 8 / 37;
     double cellBorderRadius = cellWidth / 32;
     double cellMargin = cellWidth / 16;
@@ -156,33 +201,35 @@ class _BoardState extends AnimatedWidgetBaseState<Board> {
       children: cells,
     );
   }
-}
 
-class OpacityTween extends Tween<double> {
-  OpacityTween({double begin, double end}) : super(begin: begin, end: end);
-}
-
-class SizeTween extends Tween<double> {
-  SizeTween({double begin, double end}) : super(begin: begin, end: end);
-}
-
-class EmergeWidgetTween extends Tween<Widget> {
-  EmergeWidgetTween({Widget begin, Widget end}) : super(begin: begin, end: end);
-
-  @override
-  Widget lerp(double t) {
-    if (t == 1.0) {
-      return end;
-    } else {
-      return begin;
+  Widget _wrap(List<List<int>> tiles, double cellWidth,
+      Widget Function(Widget child, int di, int dj) wrapFunction) {
+    List<Widget> rows = List<Widget>();
+    for (int i = 0; i < 4; i++) {
+      List<Widget> children = List<Widget>();
+      for (int j = 0; j < 4; j++) {
+        children.add(wrapFunction(Tile.get(tiles[i][j], cellWidth), i, j));
+      }
+      Row tmp = Row(children: children);
+      rows.add(tmp);
     }
+    Column result = Column(children: rows);
+
+    return result;
+  }
+
+  void _calculateState() {
+    this._state.calculateEverythingForPerformingMoveAnimation();
   }
 }
 
-class PositionTween extends Tween<Offset> {
-  final double middle;
-
-  PositionTween(this.middle);
+class LinearOutBack extends Curve {
+  final double out = 1.2;
+  @override
+  double transformInternal(double t) {
+    double k = 2 * out - 1;
+    return out - (out - k).abs();
+  }
 }
 
 class Tile {
@@ -205,8 +252,7 @@ class Tile {
       } else {
         tmp = Container(
           decoration: BoxDecoration(
-              color: _getColor(value),
-              borderRadius: BorderRadius.all(Radius.circular(width / 32))),
+              color: _getColor(value), borderRadius: BorderRadius.all(Radius.circular(width / 32))),
           width: width,
           height: width,
           margin: EdgeInsets.all(width / 16),
@@ -247,30 +293,275 @@ class Tile {
 
   static Color _getColor(int value) {
     Map<int, Color> colors = {
-      2: Color.alphaBlend(Color.fromARGB(254, 238, 228, 218),
-          Color.fromARGB(255, 249, 246, 242)),
-      4: Color.alphaBlend(Color.fromARGB(254, 237, 224, 200),
-          Color.fromARGB(255, 249, 246, 242)),
-      8: Color.alphaBlend(Color.fromARGB(254, 242, 177, 121),
-          Color.fromARGB(255, 249, 246, 242)),
-      16: Color.alphaBlend(Color.fromARGB(254, 245, 149, 99),
-          Color.fromARGB(255, 249, 246, 242)),
-      32: Color.alphaBlend(Color.fromARGB(254, 246, 124, 95),
-          Color.fromARGB(255, 249, 246, 242)),
-      64: Color.alphaBlend(
-          Color.fromARGB(254, 246, 94, 5), Color.fromARGB(255, 249, 246, 242)),
-      128: Color.alphaBlend(Color.fromARGB(254, 237, 207, 114),
-          Color.fromARGB(255, 249, 246, 242)),
-      256: Color.alphaBlend(Color.fromARGB(254, 237, 204, 97),
-          Color.fromARGB(255, 249, 246, 242)),
-      512: Color.alphaBlend(Color.fromARGB(254, 237, 200, 80),
-          Color.fromARGB(255, 249, 246, 242)),
-      1024: Color.alphaBlend(Color.fromARGB(254, 237, 197, 63),
-          Color.fromARGB(255, 249, 246, 242)),
-      2048: Color.alphaBlend(Color.fromARGB(254, 237, 194, 46),
-          Color.fromARGB(255, 249, 246, 242)),
+      2: Color.alphaBlend(Color.fromARGB(254, 238, 228, 218), Color.fromARGB(255, 249, 246, 242)),
+      4: Color.alphaBlend(Color.fromARGB(254, 237, 224, 200), Color.fromARGB(255, 249, 246, 242)),
+      8: Color.alphaBlend(Color.fromARGB(254, 242, 177, 121), Color.fromARGB(255, 249, 246, 242)),
+      16: Color.alphaBlend(Color.fromARGB(254, 245, 149, 99), Color.fromARGB(255, 249, 246, 242)),
+      32: Color.alphaBlend(Color.fromARGB(254, 246, 124, 95), Color.fromARGB(255, 249, 246, 242)),
+      64: Color.alphaBlend(Color.fromARGB(254, 246, 94, 5), Color.fromARGB(255, 249, 246, 242)),
+      128: Color.alphaBlend(Color.fromARGB(254, 237, 207, 114), Color.fromARGB(255, 249, 246, 242)),
+      256: Color.alphaBlend(Color.fromARGB(254, 237, 204, 97), Color.fromARGB(255, 249, 246, 242)),
+      512: Color.alphaBlend(Color.fromARGB(254, 237, 200, 80), Color.fromARGB(255, 249, 246, 242)),
+      1024: Color.alphaBlend(Color.fromARGB(254, 237, 197, 63), Color.fromARGB(255, 249, 246, 242)),
+      2048: Color.alphaBlend(Color.fromARGB(254, 237, 194, 46), Color.fromARGB(255, 249, 246, 242)),
     };
 
     return colors[value];
+  }
+}
+
+class CombinedState {
+  List<List<int>> previousTiles = [
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0]
+  ];
+
+  List<List<int>> nowTiles = [
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0]
+  ];
+
+  static final Offset _beginOffset = Offset(0.0, 0.0);
+
+  // calculated in function _calculateOffsetTweens() {
+  List<List<Tween<Offset>>> offsetTweens = [
+    [
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0))
+    ],
+    [
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0))
+    ],
+    [
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0))
+    ],
+    [
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0)),
+      Tween(begin: _beginOffset, end: Offset(0.0, 0.0))
+    ],
+  ];
+
+  // calculated in function _calculateOffsetTweens() {
+  // null for no animation, true for merge animation, false for emerge animation
+  List<List<bool>> isMerged = [
+    [
+      null,
+      null,
+      null,
+      null,
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+    ],
+  ];
+
+  GameActions previousAction = GameActions.newGame;
+
+  void _handleMoveLeft() {
+    void calculateMergeOffsetByOneLine(List<int> nowLine, List<int> previousLine, int lineIndex) {
+      Offset calculateOffsetByInt(int offset) {
+        return Offset(1.0 * offset, 0.0);
+      }
+
+      int nowIndex = 0;
+      int previousIndex = 0;
+      while (nowIndex < 4 && nowLine[nowIndex] != 0) {
+        int diff = nowLine[nowIndex];
+        while (diff != 0) {
+          if (previousLine[previousIndex] != 0) {
+            diff = diff - previousLine[previousIndex];
+            if (diff != 0) {
+              isMerged[lineIndex][nowIndex] = true;
+            }
+            offsetTweens[lineIndex][previousIndex].end =
+                calculateOffsetByInt(nowIndex - previousIndex);
+          }
+          previousIndex++;
+        }
+        nowIndex++;
+      }
+    }
+
+    for (int i = 0; i < 4; i++) {
+      List<int> nowLine = nowTiles[i];
+      List<int> previousLine = previousTiles[i];
+      //determine if there is newly emerged tile in this line
+      int nowSum = 0;
+      int previousSum = 0;
+      for (int tj = 0; tj < 4; tj++) {
+        nowSum += nowLine[tj];
+        previousSum += previousLine[tj];
+      }
+      if (nowSum == previousSum) {
+        calculateMergeOffsetByOneLine(nowLine, previousLine, i);
+      } else {
+        //handle newly emerged tile
+        int emergeIndex = 3;
+        while (nowLine[emergeIndex] == 0) {
+          emergeIndex--;
+        }
+        this.isMerged[i][emergeIndex] = false;
+        List<int> nowLineCopy = [0, 0, 0, 0];
+        for (int nowLineIndex = 0; nowLineIndex < 4; nowLineIndex++) {
+          nowLineCopy[nowLineIndex] = nowLine[nowLineIndex];
+        }
+        nowLineCopy[emergeIndex] = 0;
+        calculateMergeOffsetByOneLine(nowLineCopy, previousLine, i);
+      }
+    }
+  }
+
+  void _clear() {
+    _updateElement((i, j) {
+      isMerged[i][j] = null;
+      offsetTweens[i][j].end = Offset(0.0, 0.0);
+    });
+  }
+
+  void calculateEverythingForPerformingMoveAnimation() {
+    _clear();
+    switch (this.previousAction) {
+      case GameActions.moveRight:
+        _rotateRight();
+        _rotateRight();
+        _handleMoveLeft();
+        _rotateRight();
+        _rotateRight();
+        break;
+      case GameActions.moveLeft:
+        _handleMoveLeft();
+        break;
+      case GameActions.moveUp:
+        _rotateLeft();
+        _handleMoveLeft();
+        _rotateRight();
+        break;
+      case GameActions.moveDown:
+        _rotateRight();
+        _handleMoveLeft();
+        _rotateLeft();
+        break;
+      case GameActions.newGame:
+        break;
+    }
+  }
+
+  void printInfo() {
+    void printElement<T>(List<List<T>> matrix, String Function(T element) printOne) {
+      for (int i = 0; i < 4; i++) {
+        String line = "   ";
+        for (int j = 0; j < 4; j++) {
+          line += printOne(matrix[i][j]);
+        }
+        print(line);
+      }
+    }
+
+    print(" Previous:");
+    printElement<int>(this.previousTiles, (element) => element.toString() + " ");
+    print(" Action: " + this.previousAction.toString());
+    print(" Offsets:");
+    printElement<Tween<Offset>>(this.offsetTweens, (element) => element.end.toString() + " ");
+    print(" Now:");
+    printElement<int>(this.nowTiles, (element) => element.toString() + " ");
+  }
+
+  void _rotateLeft() {
+    _rotate(true);
+  }
+
+  void _rotateRight() {
+    _rotate(false);
+  }
+
+  void _rotate(bool isLeft) {
+    void swapFourElements(List<List<dynamic>> matrix, bool isLeft, int i, int j) {
+      dynamic tmp = matrix[i][j];
+      if (isLeft) {
+        if (matrix[i][j] is Tween<Offset>) {
+          void rotateLeft(Tween<Offset> offsetTween) {
+            offsetTween.end = Offset((offsetTween.end.dy), 0.0 - (offsetTween.end.dx));
+          }
+
+          rotateLeft(matrix[i][j]);
+          rotateLeft(matrix[j][3 - i]);
+          rotateLeft(matrix[3 - i][3 - j]);
+          rotateLeft(matrix[3 - j][i]);
+        }
+        matrix[i][j] = matrix[j][3 - i];
+        matrix[j][3 - i] = matrix[3 - i][3 - j];
+        matrix[3 - i][3 - j] = matrix[3 - j][i];
+        matrix[3 - j][i] = tmp;
+      } else {
+        if (matrix[i][j] is Tween<Offset>) {
+          void rotateRight(Tween<Offset> offsetTween) {
+            offsetTween.end = Offset(0.0 - (offsetTween.end.dy), (offsetTween.end.dx));
+          }
+
+          rotateRight(matrix[i][j]);
+          rotateRight(matrix[j][3 - i]);
+          rotateRight(matrix[3 - i][3 - j]);
+          rotateRight(matrix[3 - j][i]);
+        }
+        matrix[i][j] = matrix[3 - j][i];
+        matrix[3 - j][i] = matrix[3 - i][3 - j];
+        matrix[3 - i][3 - j] = matrix[j][3 - i];
+        matrix[j][3 - i] = tmp;
+      }
+    }
+
+    for (int i = 0; i < 2; i++) {
+      for (int j = i; j < (3 - i); j++) {
+        swapFourElements(previousTiles, isLeft, i, j);
+        swapFourElements(nowTiles, isLeft, i, j);
+        swapFourElements(offsetTweens, isLeft, i, j);
+        swapFourElements(isMerged, isLeft, i, j);
+      }
+    }
+  }
+
+  void _updateElement(void Function(int i, int j) updateFunction) {
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 4; j++) {
+        updateFunction(i, j);
+      }
+    }
+  }
+
+  void updatePreviousTilesAndAction(List<List<int>> tiles, GameActions action) {
+    this.previousAction = action;
+    _updateElement((i, j) {
+      this.previousTiles[i][j] = this.nowTiles[i][j];
+      this.nowTiles[i][j] = tiles[i][j];
+    });
   }
 }
