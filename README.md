@@ -4,7 +4,7 @@ A Flutter implementation of the game 2048. I developed it with redux and custom 
 
 ## Appearance
 
-![appearance](01.jpeg)
+<img src="01.jpeg" width="40%"/>
 
 ## Demo
 
